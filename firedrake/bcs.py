@@ -220,8 +220,7 @@ class DirichletBC(object):
         """
 
         if isinstance(r, matrix.MatrixBase):
-            r.add_bc(self)
-            return
+            raise NotImplementedError("Just `assemble` your matrix with bcs")
         fs = self._function_space
 
         # Check that u matches r if supplied
