@@ -54,9 +54,8 @@ class MatrixBase(object, metaclass=abc.ABCMeta):
                                      self.bcs)
 
     def __str__(self):
-        pfx = "" if self.assembled else "un"
-        return "%sassembled %s(a=%s, bcs=%s)" % (pfx, type(self).__name__,
-                                                 self.a, self.bcs)
+        return "%s(a=%s, bcs=%s)" % (type(self).__name__,
+                                     self.a, self.bcs)
 
 
 class Matrix(MatrixBase):
@@ -105,7 +104,7 @@ class Matrix(MatrixBase):
 
     def force_evaluation(self):
         "Ensures that the matrix is fully assembled."
-        self._M._force_evaluation()
+        self._M.assemble()
 
 
 class ImplicitMatrix(MatrixBase):

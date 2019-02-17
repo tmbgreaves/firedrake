@@ -1,10 +1,10 @@
 import numpy
 import ufl
 from collections import defaultdict
+from functools import partial
 from itertools import chain
 
 from pyop2 import op2
-from pyop2.base import collecting_loops
 from pyop2.exceptions import MapValueError, SparsityFormatError
 
 from firedrake import assemble_expressions
@@ -525,8 +525,7 @@ def _assemble(f, tensor=None, bcs=None, form_compiler_parameters=None,
         kwargs["pass_layer_arg"] = pass_layer_arg
 
         try:
-            with collecting_loops(collect_loops):
-                loops.append(op2.par_loop(*args, **kwargs))
+            loops.append(op2.ParLoop(*args, **kwargs).compute)
         except MapValueError:
             raise RuntimeError("Integral measure does not match measure of all coefficients/arguments")
 
@@ -543,39 +542,37 @@ def _assemble(f, tensor=None, bcs=None, form_compiler_parameters=None,
             if len(fs) > 1:
                 raise RuntimeError(r"""Cannot apply boundary conditions to full mixed space. Did you forget to index it?""")
             shape = result_matrix.block_shape
-            with collecting_loops(collect_loops):
-                for i in range(shape[0]):
-                    for j in range(shape[1]):
-                        # Set diagonal entries on bc nodes to 1 if the current
-                        # block is on the matrix diagonal and its index matches the
-                        # index of the function space the bc is defined on.
-                        if i != j:
-                            continue
-                        if fs.component is None and fs.index is not None:
-                            # Mixed, index (no ComponentFunctionSpace)
-                            if fs.index == i:
-                                loops.append(tensor[i, j].set_local_diagonal_entries(nodes))
-                        elif fs.component is not None:
-                            # ComponentFunctionSpace, check parent index
-                            if fs.parent.index is not None:
-                                # Mixed, index doesn't match
-                                if fs.parent.index != i:
-                                    continue
-                            # Index matches
-                            loops.append(tensor[i, j].set_local_diagonal_entries(nodes, idx=fs.component))
-                        elif fs.index is None:
-                            loops.append(tensor[i, j].set_local_diagonal_entries(nodes))
-                        else:
-                            raise RuntimeError("Unhandled BC case")
+            for i in range(shape[0]):
+                for j in range(shape[1]):
+                    # Set diagonal entries on bc nodes to 1 if the current
+                    # block is on the matrix diagonal and its index matches the
+                    # index of the function space the bc is defined on.
+                    if i != j:
+                        continue
+                    if fs.component is None and fs.index is not None:
+                        # Mixed, index (no ComponentFunctionSpace)
+                        if fs.index == i:
+                            loops.append(partial(tensor[i, j].set_local_diagonal_entries, nodes))
+                    elif fs.component is not None:
+                        # ComponentFunctionSpace, check parent index
+                        if fs.parent.index is not None:
+                            # Mixed, index doesn't match
+                            if fs.parent.index != i:
+                                continue
+                        # Index matches
+                        loops.append(partial(tensor[i, j].set_local_diagonal_entries, nodes, idx=fs.component))
+                    elif fs.index is None:
+                        loops.append(partial(tensor[i, j].set_local_diagonal_entries, nodes))
+                    else:
+                        raise RuntimeError("Unhandled BC case")
     if bcs is not None and is_vec:
         if len(bcs) > 0 and collect_loops:
             raise NotImplementedError("Loop collection not handled in this case")
         for bc in bcs:
             bc.apply(result_function)
-    if is_mat:
-        # Queue up matrix assembly (after we've done all the other operations)
-        loops.append(tensor.assemble())
     if collect_loops:
         return loops
     else:
+        for l in loops:
+            l()
         return result()
