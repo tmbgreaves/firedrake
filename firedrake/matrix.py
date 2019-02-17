@@ -41,11 +41,9 @@ class MatrixBase(object, metaclass=abc.ABCMeta):
         self.has_bcs = self._bcs != ()
 
     @abc.abstractmethod
-    def force_evaluation(self):
-        """Force any pending writes to this matrix.
-
-        Ensures that the matrix is assembled and populated with
-        values, ready for sending to PETSc."""
+    def assemble(self):
+        """Ensures that the matrix is assembled and populated with
+        values, ready for sending to PETSc solvers."""
         pass
 
     def __repr__(self):
@@ -54,9 +52,8 @@ class MatrixBase(object, metaclass=abc.ABCMeta):
                                      self.bcs)
 
     def __str__(self):
-        pfx = "" if self.assembled else "un"
-        return "%sassembled %s(a=%s, bcs=%s)" % (pfx, type(self).__name__,
-                                                 self.a, self.bcs)
+        return "%s(a=%s, bcs=%s)" % (type(self).__name__,
+                                     self.a, self.bcs)
 
 
 class Matrix(MatrixBase):
@@ -85,27 +82,14 @@ class Matrix(MatrixBase):
         # sets self._a, self._bcs, and self._mat_type
         super(Matrix, self).__init__(a, bcs, mat_type)
         options_prefix = kwargs.pop("options_prefix")
-        self._M = op2.Mat(*args, **kwargs)
-        self.petscmat = self._M.handle
+        self.M = op2.Mat(*args, **kwargs)
+        self.petscmat = self.M.handle
         self.petscmat.setOptionsPrefix(options_prefix)
         self.mat_type = mat_type
 
-    @property
-    def M(self):
-        """The :class:`pyop2.Mat` representing the assembled form
-
-        .. note ::
-
-            This property forces an actual assembly of the form, if you
-            just need a handle on the :class:`pyop2.Mat` object it's
-            wrapping, use :attr:`_M` instead."""
-        # User wants to see it, so force the evaluation.
-        self.force_evaluation()
-        return self._M
-
-    def force_evaluation(self):
+    def assemble(self):
         "Ensures that the matrix is fully assembled."
-        self._M._force_evaluation()
+        self.M.assemble()
 
 
 class ImplicitMatrix(MatrixBase):
@@ -146,7 +130,6 @@ class ImplicitMatrix(MatrixBase):
         self.petscmat.setPythonContext(ctx)
         self.petscmat.setOptionsPrefix(options_prefix)
         self.petscmat.setUp()
-        self.petscmat.assemble()
 
-    def force_evaluation(self):
+    def assemble(self):
         self.petscmat.assemble()

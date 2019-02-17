@@ -1,10 +1,10 @@
 import numpy
 import ufl
 from collections import defaultdict
+from functools import partial
 from itertools import chain
 
 from pyop2 import op2
-from pyop2.base import collecting_loops
 from pyop2.exceptions import MapValueError, SparsityFormatError
 
 from firedrake import assemble_expressions
@@ -308,21 +308,21 @@ def _assemble(f, tensor=None, bcs=None, form_compiler_parameters=None,
             except SparsityFormatError:
                 raise ValueError("Monolithic matrix assembly is not supported for systems with R-space blocks.")
 
-            result_matrix = matrix.Matrix(f, bcs, mat_type, sparsity, numpy.float64,
-                                          "%s_%s_matrix" % fs_names,
-                                          options_prefix=options_prefix)
-            tensor = result_matrix._M
+            result = matrix.Matrix(f, bcs, mat_type, sparsity, numpy.float64,
+                                   "%s_%s_matrix" % fs_names,
+                                   options_prefix=options_prefix)
+            tensor = result.M
         else:
             if isinstance(tensor, matrix.ImplicitMatrix):
                 raise ValueError("Expecting matfree with implicit matrix")
 
-            result_matrix = tensor
+            result = tensor
             # Replace any bcs on the tensor we passed in
-            result_matrix.bcs = bcs
-            tensor = tensor._M
+            result.bcs = bcs
+            tensor = tensor.M
             zero_tensor = tensor.zero
 
-        if result_matrix.block_shape != (1, 1) and mat_type == "baij":
+        if result.block_shape != (1, 1) and mat_type == "baij":
             raise ValueError("BAIJ matrix type makes no sense for mixed spaces, use 'aij'")
 
         def mat(testmap, trialmap, rowbc, colbc, i, j):
@@ -343,31 +343,27 @@ def _assemble(f, tensor=None, bcs=None, form_compiler_parameters=None,
                          for bc in chain(rowbc, colbc) if bc is not None)
             return tensor[i, j](op2.INC, maps, lgmaps=(rlgmap, clgmap), unroll_map=unroll)
 
-        result = lambda: result_matrix
         if allocate_only:
-            result_matrix._assembly_callback = None
-            return result_matrix
+            return result
     elif is_vec:
         test = f.arguments()[0]
         if tensor is None:
-            result_function = function.Function(test.function_space())
-            tensor = result_function.dat
+            result = function.Function(test.function_space())
+            tensor = result.dat
         else:
-            result_function = tensor
-            tensor = result_function.dat
+            result = tensor
+            tensor = result.dat
             zero_tensor = tensor.zero
 
         def vec(testmap, i):
             _testmap = testmap(test.function_space()[i])
-            return tensor[i](op2.INC, _testmap if _testmap else None)
-        result = lambda: result_function
+            return tensor[i](op2.INC, _testmap)
     else:
         # 0-forms are always scalar
         if tensor is None:
             tensor = op2.Global(1, [0.0])
         else:
             raise ValueError("Can't assemble 0-form into existing tensor")
-        result = lambda: tensor.data[0]
 
     coefficients = f.coefficients()
     domains = f.ufl_domains()
@@ -430,7 +426,7 @@ def _assemble(f, tensor=None, bcs=None, form_compiler_parameters=None,
         # Extract block from tensor and test/trial spaces
         # FIXME Ugly variable renaming required because functions are not
         # lexical closures in Python and we're writing to these variables
-        if is_mat and result_matrix.block_shape > (1, 1):
+        if bcs is not None and is_mat and result.block_shape > (1, 1):
             tsbc = []
             trbc = []
             # Unwind ComponentFunctionSpace to check for matching BCs
@@ -506,18 +502,18 @@ def _assemble(f, tensor=None, bcs=None, form_compiler_parameters=None,
 
         coords = m.coordinates
         args = [kernel, itspace, tensor_arg,
-                coords.dat(op2.READ, get_map(coords)[op2.i[0]])]
+                coords.dat(op2.READ, get_map(coords))]
         if needs_orientations:
             o = m.cell_orientations()
-            args.append(o.dat(op2.READ, get_map(o)[op2.i[0]]))
+            args.append(o.dat(op2.READ, get_map(o)))
         if needs_cell_sizes:
             o = m.cell_sizes
-            args.append(o.dat(op2.READ, get_map(o)[op2.i[0]]))
+            args.append(o.dat(op2.READ, get_map(o)))
         for n in coeff_map:
             c = coefficients[n]
             for c_ in c.split():
                 m_ = get_map(c_)
-                args.append(c_.dat(op2.READ, m_ and m_[op2.i[0]]))
+                args.append(c_.dat(op2.READ, m_))
         if needs_cell_facets:
             assert integral_type == "cell"
             extra_args.append(m.cell_to_facets(op2.READ))
@@ -526,8 +522,7 @@ def _assemble(f, tensor=None, bcs=None, form_compiler_parameters=None,
         kwargs["pass_layer_arg"] = pass_layer_arg
 
         try:
-            with collecting_loops(collect_loops):
-                loops.append(op2.par_loop(*args, **kwargs))
+            loops.append(op2.ParLoop(*args, **kwargs).compute)
         except MapValueError:
             raise RuntimeError("Integral measure does not match measure of all coefficients/arguments")
 
@@ -543,40 +538,43 @@ def _assemble(f, tensor=None, bcs=None, form_compiler_parameters=None,
             nodes = bc.nodes
             if len(fs) > 1:
                 raise RuntimeError(r"""Cannot apply boundary conditions to full mixed space. Did you forget to index it?""")
-            shape = result_matrix.block_shape
-            with collecting_loops(collect_loops):
-                for i in range(shape[0]):
-                    for j in range(shape[1]):
-                        # Set diagonal entries on bc nodes to 1 if the current
-                        # block is on the matrix diagonal and its index matches the
-                        # index of the function space the bc is defined on.
-                        if i != j:
-                            continue
-                        if fs.component is None and fs.index is not None:
-                            # Mixed, index (no ComponentFunctionSpace)
-                            if fs.index == i:
-                                loops.append(tensor[i, j].set_local_diagonal_entries(nodes))
-                        elif fs.component is not None:
-                            # ComponentFunctionSpace, check parent index
-                            if fs.parent.index is not None:
-                                # Mixed, index doesn't match
-                                if fs.parent.index != i:
-                                    continue
-                            # Index matches
-                            loops.append(tensor[i, j].set_local_diagonal_entries(nodes, idx=fs.component))
-                        elif fs.index is None:
-                            loops.append(tensor[i, j].set_local_diagonal_entries(nodes))
-                        else:
-                            raise RuntimeError("Unhandled BC case")
+            shape = result.block_shape
+            for i in range(shape[0]):
+                for j in range(shape[1]):
+                    # Set diagonal entries on bc nodes to 1 if the current
+                    # block is on the matrix diagonal and its index matches the
+                    # index of the function space the bc is defined on.
+                    if i != j:
+                        continue
+                    if fs.component is None and fs.index is not None:
+                        # Mixed, index (no ComponentFunctionSpace)
+                        if fs.index == i:
+                            loops.append(partial(tensor[i, j].set_local_diagonal_entries, nodes))
+                    elif fs.component is not None:
+                        # ComponentFunctionSpace, check parent index
+                        if fs.parent.index is not None:
+                            # Mixed, index doesn't match
+                            if fs.parent.index != i:
+                                continue
+                        # Index matches
+                        loops.append(partial(tensor[i, j].set_local_diagonal_entries, nodes, idx=fs.component))
+                    elif fs.index is None:
+                        loops.append(partial(tensor[i, j].set_local_diagonal_entries, nodes))
+                    else:
+                        raise RuntimeError("Unhandled BC case")
     if bcs is not None and is_vec:
         if len(bcs) > 0 and collect_loops:
             raise NotImplementedError("Loop collection not handled in this case")
         for bc in bcs:
-            bc.apply(result_function)
+            bc.apply(result)
     if is_mat:
-        # Queue up matrix assembly (after we've done all the other operations)
-        loops.append(tensor.assemble())
+        loops.append(result.assemble)
     if collect_loops:
         return loops
     else:
-        return result()
+        for l in loops:
+            l()
+        if not (is_mat or is_vec):
+            return tensor.data[0]
+        else:
+            return result
