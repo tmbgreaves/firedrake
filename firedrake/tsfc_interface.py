@@ -98,7 +98,6 @@ class TSFCKernel(Cached):
         # unnecessary repeated calls to TSFC when actually only the kernel code
         # needs to be regenerated
         return md5((form.signature() + name
-                    + str(sorted(default_parameters["coffee"].items()))
                     + str(sorted(parameters.items()))
                     + str(number_map)
                     + str(type(interface))
@@ -122,12 +121,11 @@ class TSFCKernel(Cached):
         kernels = []
         for kernel in tree:
             # Set optimization options
-            opts = default_parameters["coffee"]
             ast = kernel.ast
             ast = ast if not assemble_inverse else _inverse(ast)
             # Unwind coefficient numbering
             numbers = tuple(number_map[c] for c in kernel.coefficient_numbers)
-            kernels.append(KernelInfo(kernel=Kernel(ast, ast.name, opts=opts),
+            kernels.append(KernelInfo(kernel=Kernel(ast, ast.name),
                                       integral_type=kernel.integral_type,
                                       oriented=kernel.oriented,
                                       subdomain_id=kernel.subdomain_id,
@@ -188,7 +186,7 @@ def compile_form(form, name, parameters=None, inverse=False, split=True, interfa
     def tuplify(params):
         return tuple((k, params[k]) for k in sorted(params))
 
-    key = (tuplify(default_parameters["coffee"]), name, tuplify(parameters), split)
+    key = (name, tuplify(parameters), split)
     try:
         return cache[key]
     except KeyError:

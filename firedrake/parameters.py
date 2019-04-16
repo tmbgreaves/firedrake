@@ -1,5 +1,4 @@
 """The parameters dictionary contains global parameter settings."""
-from coffee import coffee_reconfigure
 from pyop2.configuration import configuration
 from tsfc import default_parameters
 import sys
@@ -53,12 +52,6 @@ class Parameters(dict):
 parameters = Parameters()
 """A nested dictionary of parameters used by Firedrake"""
 
-# The COFFEE default optimization level is O2
-coffee_default_optlevel = "Ov"
-coffee_opts = Parameters("coffee", optlevel=coffee_default_optlevel)
-coffee_opts.set_update_function(lambda k, v: coffee_reconfigure(**{k: v}))
-parameters.add(coffee_opts)
-
 # Default to the values of PyOP2 configuration dictionary
 pyop2_opts = Parameters("pyop2_options",
                         **configuration)
@@ -67,9 +60,6 @@ pyop2_opts.set_update_function(lambda k, v: configuration.unsafe_reconfigure(**{
 
 # Override values
 pyop2_opts["type_check"] = True
-
-# PyOP2 must know about the COFFEE optimization level chosen by Firedrake
-pyop2_opts["opt_level"] = coffee_default_optlevel
 
 parameters.add(pyop2_opts)
 
@@ -90,7 +80,7 @@ def disable_performance_optimisations():
 
     This is mostly useful for debugging purposes.
 
-    This switches off all of COFFEE's kernel compilation optimisations
+    This switches off all of loopy's kernel compilation optimisations
     and enables PyOP2's runtime checking of par_loop arguments in all
     cases (even those where they are claimed safe).  Additionally, it
     switches to compiling generated code in debug mode.
@@ -102,19 +92,16 @@ def disable_performance_optimisations():
     debug = parameters["pyop2_options"]["debug"]
     lazy = parameters["pyop2_options"]["lazy_evaluation"]
     safe_check = parameters["type_check_safe_par_loops"]
-    coffee = parameters["coffee"]
 
     def restore():
         parameters["pyop2_options"]["type_check"] = check
         parameters["pyop2_options"]["debug"] = debug
         parameters["pyop2_options"]["lazy_evaluation"] = lazy
         parameters["type_check_safe_par_loops"] = safe_check
-        parameters["coffee"] = coffee
 
     parameters["pyop2_options"]["type_check"] = True
     parameters["pyop2_options"]["debug"] = True
     parameters["pyop2_options"]["lazy_evaluation"] = False
     parameters["type_check_safe_par_loops"] = True
-    parameters["coffee"] = {}
 
     return restore
