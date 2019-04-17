@@ -1,5 +1,6 @@
 import abc
 from pyop2 import op2
+from pyop2.utils import as_tuple
 from firedrake.petsc import PETSc
 
 
@@ -80,7 +81,7 @@ class Matrix(MatrixBase):
 
     def __init__(self, a, bcs, mat_type, *args, **kwargs):
         # sets self._a, self._bcs, and self._mat_type
-        super(Matrix, self).__init__(a, bcs, mat_type)
+        super().__init__(a, bcs, mat_type)
         options_prefix = kwargs.pop("options_prefix")
         self.M = op2.Mat(*args, **kwargs)
         self.petscmat = self.M.handle
@@ -112,7 +113,7 @@ class ImplicitMatrix(MatrixBase):
 
     """
     def __init__(self, a, bcs, *args, **kwargs):
-        super(ImplicitMatrix, self).__init__(a, bcs, "matfree")
+        super().__init__(a, bcs, "matfree")
 
         options_prefix = kwargs.pop("options_prefix")
         appctx = kwargs.get("appctx", {})
@@ -130,6 +131,14 @@ class ImplicitMatrix(MatrixBase):
         self.petscmat.setPythonContext(ctx)
         self.petscmat.setOptionsPrefix(options_prefix)
         self.petscmat.setUp()
+
+    def update_bcs(self, bcs):
+        bcs = as_tuple(bcs)
+        if set(self.bcs) == set(bcs):
+            return
+        self.bcs = bcs
+        ctx = self.petscmat.getPythonContext()
+        ctx.update_bcs(bcs, bcs)
 
     def assemble(self):
         self.petscmat.assemble()

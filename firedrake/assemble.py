@@ -247,6 +247,7 @@ def _assemble(f, tensor=None, bcs=None, form_compiler_parameters=None,
                                              options_prefix=options_prefix)
             if not isinstance(tensor, matrix.ImplicitMatrix):
                 raise ValueError("Expecting implicit matrix with matfree")
+            tensor.update_bcs(bcs)
             tensor.assemble()
             return tensor
         test, trial = f.arguments()

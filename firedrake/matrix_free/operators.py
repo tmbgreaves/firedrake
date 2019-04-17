@@ -1,6 +1,8 @@
+import operator
+
+import firedrake
 from firedrake.ufl_expr import adjoint, action
 from firedrake.formmanipulation import ExtractSubBlock
-
 from firedrake.petsc import PETSc
 
 
@@ -70,34 +72,21 @@ class ImplicitMatrixContext(object):
        preconditioners and the like.
 
     """
-    def __init__(self, a, row_bcs=[], col_bcs=[],
+    def __init__(self, a, row_bcs=(), col_bcs=(),
                  fc_params=None, appctx=None):
         self.a = a
         self.aT = adjoint(a)
         self.fc_params = fc_params
         self.appctx = appctx
-
-        self.row_bcs = row_bcs
-        self.col_bcs = col_bcs
-
         # create functions from test and trial space to help
         # with 1-form assembly
-        test_space, trial_space = [
-            a.arguments()[i].function_space() for i in (0, 1)
-        ]
-        from firedrake import function
+        test_space, trial_space = map(operator.methodcaller("function_space"), self.a.arguments())
 
-        self._y = function.Function(test_space)
-        self._x = function.Function(trial_space)
-
-        # These are temporary storage for holding the BC
-        # values during matvec application.  _xbc is for
-        # the action and ._ybc is for transpose.
-        if len(self.row_bcs) > 0:
-            self._xbc = function.Function(trial_space)
-        if len(self.col_bcs) > 0:
-            self._ybc = function.Function(test_space)
-
+        self._y = firedrake.Function(test_space)
+        self._x = firedrake.Function(trial_space)
+        self.row_bcs = ()
+        self.col_bcs = ()
+        self.update_bcs(row_bcs, col_bcs)
         # Get size information from template vecs on test and trial spaces
         trial_vec = trial_space.dof_dset.layout_vec
         test_vec = test_space.dof_dset.layout_vec
@@ -115,6 +104,17 @@ class ImplicitMatrixContext(object):
 
         self._assemble_actionT = create_assembly_callable(self.actionT, tensor=self._x,
                                                           form_compiler_parameters=self.fc_params)
+
+    def update_bcs(self, row_bcs, col_bcs):
+        test_space, trial_space = map(operator.methodcaller("function_space"), self.a.arguments())
+        if set(self.row_bcs) != set(row_bcs):
+            self.row_bcs = row_bcs
+            if len(self.row_bcs) > 0:
+                self._xbc = firedrake.Function(trial_space)
+        if set(self.col_bcs) != set(col_bcs):
+            self.col_bcs = col_bcs
+            if len(self.col_bcs) > 0:
+                self._ybc = firedrake.Function(test_space)
 
     def mult(self, mat, X, Y):
         with self._x.dat.vec_wo as v:
@@ -210,61 +210,59 @@ class ImplicitMatrixContext(object):
     # and index sets rather than an assembled matrix, keeping matrix
     # assembly deferred as long as possible.
     def createSubMatrix(self, mat, row_is, col_is, target=None):
-        if target is not None:
-            # Repeat call, just return the matrix, since we don't
-            # actually assemble in here.
-            target.assemble()
-            return target
-        from firedrake import DirichletBC
+        def split_bcs(bcs, indices, W):
+            for bc in bcs:
+                for i, r in enumerate(indices):
+                    if bc.function_space().index == r:
+                        yield firedrake.DirichletBC(W.split()[i],
+                                                    bc.function_arg,
+                                                    bc.sub_domain,
+                                                    method=bc.method)
+        if target is None:
+            # Making new matrix
+            # These are the sets of ISes of which the the row and column
+            # space consist.
+            row_ises = self._y.function_space().dof_dset.field_ises
+            col_ises = self._x.function_space().dof_dset.field_ises
 
-        # These are the sets of ISes of which the the row and column
-        # space consist.
-        row_ises = self._y.function_space().dof_dset.field_ises
-        col_ises = self._x.function_space().dof_dset.field_ises
+            row_inds = find_sub_block(row_is, row_ises)
+            if row_is == col_is and row_ises == col_ises:
+                col_inds = row_inds
+            else:
+                col_inds = find_sub_block(col_is, col_ises)
 
-        row_inds = find_sub_block(row_is, row_ises)
-        if row_is == col_is and row_ises == col_ises:
-            col_inds = row_inds
+            asub = ExtractSubBlock().split(self.a,
+                                           argument_indices=(row_inds, col_inds))
+
+            submat_ctx = ImplicitMatrixContext(asub,
+                                               fc_params=self.fc_params,
+                                               appctx=self.appctx)
+            submat_ctx.row_inds = row_inds
+            submat_ctx.col_inds = col_inds
+            submat_ctx.on_diag = self.on_diag and row_inds == col_inds
+            submat = PETSc.Mat().create(comm=mat.comm)
+            submat.setType("python")
+            submat.setSizes((submat_ctx.row_sizes, submat_ctx.col_sizes),
+                            bsize=submat_ctx.block_size)
+            submat.setPythonContext(submat_ctx)
+            submat.setUp()
+            target = submat
         else:
-            col_inds = find_sub_block(col_is, col_ises)
+            submat_ctx = target.getPythonContext()
+            asub = submat_ctx.a
+            row_inds = submat_ctx.row_inds
+            col_inds = submat_ctx.col_inds
 
-        asub = ExtractSubBlock().split(self.a,
-                                       argument_indices=(row_inds, col_inds))
-        Wrow = asub.arguments()[0].function_space()
-        Wcol = asub.arguments()[1].function_space()
+        # Add the boundary conditions
+        Wrow, Wcol = map(operator.methodcaller("function_space"), asub.arguments())
 
-        row_bcs = []
-        col_bcs = []
-
-        for bc in self.row_bcs:
-            for i, r in enumerate(row_inds):
-                if bc.function_space().index == r:
-                    row_bcs.append(DirichletBC(Wrow.split()[i],
-                                               bc.function_arg,
-                                               bc.sub_domain,
-                                               method=bc.method))
+        row_bcs = tuple(split_bcs(self.row_bcs, row_inds, Wrow))
 
         if Wrow == Wcol and row_inds == col_inds and self.row_bcs == self.col_bcs:
             col_bcs = row_bcs
         else:
-            for bc in self.col_bcs:
-                for i, c in enumerate(col_inds):
-                    if bc.function_space().index == c:
-                        col_bcs.append(DirichletBC(Wcol.split()[i],
-                                                   bc.function_arg,
-                                                   bc.sub_domain,
-                                                   method=bc.method))
-        submat_ctx = ImplicitMatrixContext(asub,
-                                           row_bcs=row_bcs,
-                                           col_bcs=col_bcs,
-                                           fc_params=self.fc_params,
-                                           appctx=self.appctx)
-        submat_ctx.on_diag = self.on_diag and row_inds == col_inds
-        submat = PETSc.Mat().create(comm=mat.comm)
-        submat.setType("python")
-        submat.setSizes((submat_ctx.row_sizes, submat_ctx.col_sizes),
-                        bsize=submat_ctx.block_size)
-        submat.setPythonContext(submat_ctx)
-        submat.setUp()
+            col_bcs = tuple(split_bcs(self.col_bcs, col_inds, Wcol))
 
-        return submat
+        submat_ctx.update_bcs(row_bcs, col_bcs)
+        target.assemble()
+        return target
