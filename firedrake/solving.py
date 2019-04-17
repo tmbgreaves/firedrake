@@ -215,8 +215,9 @@ def _la_solve(A, x, b, **kwargs):
 
     bcs, solver_parameters, nullspace, nullspace_T, near_nullspace, \
         options_prefix = _extract_linear_solver_args(A, x, b, **kwargs)
+
     if bcs is not None:
-        A.bcs = bcs
+        raise NotImplementedError("Just assemble your matrix with bcs: assemble(..., bcs=bcs)")
 
     solver = ls.LinearSolver(A, solver_parameters=solver_parameters,
                              nullspace=nullspace,
