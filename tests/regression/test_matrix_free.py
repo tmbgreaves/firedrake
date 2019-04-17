@@ -217,7 +217,9 @@ def test_matrix_free_preassembly_change_bcs(mesh):
 
     u.assign(0)
     b = assemble(Constant(6)*v*dx)
-    solve(A, u, b, bcs=bc2)
+
+    A = assemble(a, tensor=A, bcs=bc2, mat_type="matfree")
+    solve(A, u, b)
     assert np.allclose(u.vector().array(), 6.0)
 
 

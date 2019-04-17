@@ -31,6 +31,7 @@ def adv_diff(x, quadrilateral=False):
     a = M + 0.5 * d
     L = action(M - 0.5 * d, t)
 
+    u.interpolate(as_vector([1.0, 0.0]))
     A = assemble(a)
 
     # Set initial condition:
@@ -41,7 +42,6 @@ def adv_diff(x, quadrilateral=False):
     r2 = pow(x[0] - (0.45 + cT), 2.0) + pow(x[1] - 0.5, 2.0)
     fexpr = 0.1 * (exp(-r2 / (0.4 * cT)) / (0.4 * pi * cT))
     t.interpolate(fexpr)
-    u.interpolate(as_vector([1.0, 0.0]))
 
     while T < 0.012:
         b = assemble(L)

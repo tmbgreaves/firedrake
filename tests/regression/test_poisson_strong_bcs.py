@@ -80,56 +80,22 @@ def run_test_preassembled(r, degree, parameters={}, quadrilateral=False):
     L = v*f*dx
     bcs = [DirichletBC(V, Constant(0), 3),
            DirichletBC(V, Constant(42), 4)]
-
-    u = Function(V)
-
-    A = assemble(a)
-    b = assemble(L)
-    for bc in bcs:
-        bc.apply(A)
-        bc.apply(b)
-    solve(A, u, b, solver_parameters=parameters)
-
     expected = Function(V)
     expected.interpolate(42*x[1])
 
-    method_A = sqrt(assemble(dot(u - expected, u - expected) * dx))
-
-    A = assemble(a)
-    b = assemble(L)
-    solve(A, u, b, bcs=bcs, solver_parameters=parameters)
-    method_B = sqrt(assemble(dot(u - expected, u - expected) * dx))
+    u = Function(V)
 
     A = assemble(a, bcs=bcs)
     b = assemble(L, bcs=bcs)
     solve(A, u, b, solver_parameters=parameters)
-    method_C = sqrt(assemble(dot(u - expected, u - expected) * dx))
+    method_A = sqrt(assemble(dot(u - expected, u - expected) * dx))
 
     A = assemble(a, bcs=bcs)
     b = assemble(L)
     solve(A, u, b, solver_parameters=parameters)
-    method_D = sqrt(assemble(dot(u - expected, u - expected) * dx))
+    method_B = sqrt(assemble(dot(u - expected, u - expected) * dx))
 
-    A = assemble(a)
-    b = assemble(L)
-    # Don't actually need to apply the bcs to b explicitly since it's
-    # done in the solve if A has any.
-    for bc in bcs:
-        bc.apply(A)
-    solve(A, u, b, solver_parameters=parameters)
-    method_E = sqrt(assemble(dot(u - expected, u - expected) * dx))
-
-    A = assemble(a, bcs=[bcs[0]])
-    b = assemble(L)
-    # This will not give the right answer
-    solve(A, u, b, solver_parameters=parameters)
-    bcs[1].apply(A)
-    b = assemble(L)
-    # This will, because we reassemble using the new set of bcs
-    solve(A, u, b, solver_parameters=parameters)
-    method_F = sqrt(assemble(dot(u - expected, u - expected) * dx))
-
-    return np.asarray([method_A, method_B, method_C, method_D, method_E, method_F])
+    return np.asarray([method_A, method_B])
 
 
 @pytest.mark.parametrize(['params', 'degree', 'quadrilateral'],
