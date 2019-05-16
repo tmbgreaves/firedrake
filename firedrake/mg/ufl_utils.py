@@ -138,7 +138,6 @@ def coarsen_function_space(V, self, coefficient_mapping=None):
 
     mesh = self(V.mesh(), self)
 
-    Vf = V
     V = firedrake.FunctionSpace(mesh, V.ufl_element())
 
     for i in reversed(indices):
