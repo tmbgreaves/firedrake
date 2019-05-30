@@ -215,7 +215,8 @@ def test_preassembly_change_bcs(V, f, mat_type):
 
     u.assign(0)
     b = assemble(dot(v, y)*dx)
-    solve(A, u, b, bcs=[bc1])
+    A = assemble(a, tensor=A, bcs=[bc1], mat_type=mat_type)
+    solve(A, u, b)
     assert np.allclose(u.vector().array(), 7.0)
 
 

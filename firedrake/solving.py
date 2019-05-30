@@ -217,7 +217,7 @@ def _la_solve(A, x, b, **kwargs):
         if not bc.is_linear:
             raise RuntimeError("EquationBCs must also be linear when solving linear system.")
     if bcs is not None:
-        A.bcs = bcs
+        raise NotImplementedError("Just assemble your matrix with bcs: assemble(..., bcs=bcs)")
     solver = ls.LinearSolver(A, solver_parameters=solver_parameters,
                              nullspace=nullspace,
                              transpose_nullspace=nullspace_T,
