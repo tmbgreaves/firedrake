@@ -127,7 +127,7 @@ class TSFCKernel(Cached):
             ast = ast if not assemble_inverse else _inverse(ast)
             # Unwind coefficient numbering
             numbers = tuple(number_map[c] for c in kernel.coefficient_numbers)
-            kernels.append(KernelInfo(kernel=Kernel(ast, ast.name, opts=opts),
+            kernels.append(KernelInfo(kernel=Kernel(ast, ast.name, opts=opts, cpp=True),
                                       integral_type=kernel.integral_type,
                                       oriented=kernel.oriented,
                                       subdomain_id=kernel.subdomain_id,
