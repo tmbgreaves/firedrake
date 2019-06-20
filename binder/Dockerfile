@@ -20,6 +20,6 @@ RUN bash -c ". /home/firedrake/firedrake/bin/activate && pip install jupyterhub 
 RUN bash -c ". /home/firedrake/firedrake/bin/activate && jupyter nbextension enable --py widgetsnbextension --sys-prefix"
 RUN bash -c "rm firedrake-*"
 
-RUN bash -c ". /home/firedrake/firedrake/bin/activate && move-notebooks"
+RUN bash -c "cp -r firedrake/src/firedrake/docs/notebooks/* ."
 ENV OMPI_MCA_btl=tcp,self
 ENV PATH=/home/firedrake/firedrake/bin:$PATH
